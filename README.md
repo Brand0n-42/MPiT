@@ -2,7 +2,7 @@
 
 MPiT is a minimalistic MP3 player that lives in your terminal.
 
-MPiT should works on Linux, Windows, and macOS.
+MPiT should work on Linux, Windows, and macOS.
 
 **HOW TO INSTALL :** Download MPiT.py
 
