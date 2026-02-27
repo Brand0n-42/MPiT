@@ -7,10 +7,22 @@ import time
 import curses
 import pygame
 from enum import Enum
-from mutagen.mp3 import MP3
+
+import mutagen
+
+
+
+import argparse
 
 
 FPS = 24
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument('-d', '-dir', dest='directory', type=str, help='defines directory')
+parser.add_argument('-m', '-min', dest='minimum_ui', action='store_true', help='if included uses minimum ui')
+
+args = parser.parse_args()
 
 
 def clamp(x, minimum, maximum):
@@ -22,11 +34,13 @@ class SongState(Enum):
     PLAYING = 1
     PAUSED = 2
 
+
 class MusicPlayer:
 
-    def __init__(self, stdscr, music_dir):
+    def __init__(self, stdscr, music_dir, minimum_ui):
         self.stdscr         = stdscr
         self.music_dir      = music_dir
+        self.minimum_ui     = minimum_ui
 
         self.songs          = self.load_songs()
         self.selected_index = 0
@@ -59,11 +73,11 @@ class MusicPlayer:
 
         songs = sorted(
             f for f in os.listdir(self.music_dir)
-            if f.lower().endswith(".mp3")
+            if f.lower().endswith(".mp3") or f.lower().endswith(".wav") or f.lower().endswith(".ogg")
         )
 
         if not songs:
-            self.show_error(f"No mp3 files found in:\n{self.music_dir}")
+            self.show_error(f"No supported files found in:\n{self.music_dir}")
 
         return songs
 
@@ -96,7 +110,24 @@ class MusicPlayer:
         self.state = SongState.PLAYING
 
         # Cache song length once
-        self.current_length = MP3(file_path).info.length
+        self.current_length = mutagen.File(file_path).info.length
+
+
+    def update_progress(self):
+        if self.state != SongState.PLAYING:
+            return
+
+        if self.current_length <= 0:
+            self.progress = 0
+            return
+
+        pos_s = pygame.mixer.music.get_pos() / 1000.0
+
+        self.progress = (pos_s / self.current_length) * 100
+
+        if self.progress >= 99:
+            next_index = (self.playing_index + 1) % len(self.songs)
+            self.play_song(next_index)
 
     def toggle_play_pause(self):
         if self.state == SongState.STOPPED:
@@ -118,22 +149,6 @@ class MusicPlayer:
 
             return
 
-    def update_progress(self):
-        if self.state != SongState.PLAYING:
-            return
-
-        if self.current_length <= 0:
-            self.progress = 0
-            return
-
-        pos_s = pygame.mixer.music.get_pos() / 1000.0
-
-        self.progress = (pos_s / self.current_length) * 100
-
-        if self.progress >= 99:
-            next_index = (self.playing_index + 1) % len(self.songs)
-            self.play_song(next_index)
-
     def handle_input(self):
 
         key = self.stdscr.getch()
@@ -146,6 +161,11 @@ class MusicPlayer:
             self.toggle_play_pause()
             return
 
+        if key == ord('n') and self.playing_index != -1:
+            self.selected_index = (self.playing_index + 1) % len(self.songs)
+            self.play_song(self.selected_index)
+            return
+            
         if key == curses.KEY_UP:
             self.selected_index = (self.selected_index - 1) % len(self.songs)
             return
@@ -189,7 +209,11 @@ class MusicPlayer:
             pass
 
     def draw_song_list(self, height, width):
-        max_visible = height - 5
+
+        if self.minimum_ui == False:
+            max_visible = height - 5
+        else:
+            max_visible = height
 
         if len(self.songs) <= max_visible:
             offset = 0
@@ -205,9 +229,18 @@ class MusicPlayer:
         max_id = min(offset + max_visible, len(self.songs))
 
         for i in range(offset, max_id):
-            row = 2 + i - offset
+
+            if self.minimum_ui == False:
+                row = 2 + i - offset
+            else:
+                row = i - offset
+
             name = self.songs[i][:-4]
-            name = name[:width - 9]
+
+            if self.minimum_ui == False:
+                name = name[:width - 9]
+            else:
+                name = name[:width - 6]
 
             prefix = "  "
             if i == self.playing_index:
@@ -219,9 +252,15 @@ class MusicPlayer:
 
             try:
                 if i == self.selected_index:
-                    self.stdscr.addstr(row, 2, line, curses.color_pair(1))
+                    if self.minimum_ui == False:
+                        self.stdscr.addstr(row, 2, line, curses.color_pair(1))
+                    else:
+                        self.stdscr.addstr(row, 0, line, curses.color_pair(1))
                 else:
-                    self.stdscr.addstr(row, 2, line)
+                    if self.minimum_ui == False:
+                        self.stdscr.addstr(row, 2, line)
+                    else:
+                        self.stdscr.addstr(row, 0, line)
             except curses.error:
                 pass
 
@@ -230,16 +269,25 @@ class MusicPlayer:
 
         height, width = self.stdscr.getmaxyx()
 
-        if height < 8:
-            self.show_error("terminal to small \nminimum size is 8 lines")
-            
+        if self.minimum_ui == False:
+            if height < 8:
+                self.show_error("terminal to small \nminimum size is 8 lines")
+        else:
+            if height < 3:
+                self.show_error("terminal to small \nminimum size is 3 lines in minimum mode")
+
         if width < 9:
             self.show_error("terminal to small \nminimum size is 9 columns")
 
-        #--draws a border around the edge of the terminal--
-        self.stdscr.border('|', '|', '-', '-', '+', '+', '+', '+')
 
-        self.draw_progress_bar(height, width)
+        if self.minimum_ui == False:
+
+            #--draws a border around the edge of the terminal--
+            self.stdscr.border('|', '|', '-', '-', '+', '+', '+', '+')
+
+            self.draw_progress_bar(height, width)
+            self.draw_song_list(height, width)
+        
         self.draw_song_list(height, width)
 
         self.stdscr.refresh()
@@ -257,13 +305,16 @@ class MusicPlayer:
 
 def main(stdscr):
 
-    if len(sys.argv) > 1:
-        music_dir = os.path.expanduser(sys.argv[1])
+    if args.directory != None:
+        music_dir = os.path.expanduser(args.directory)
     else:
         music_dir = os.path.expanduser("~/Music")
 
-    MusicPlayer(stdscr, music_dir).run()
+    minimum_ui = args.minimum_ui
+
+    MusicPlayer(stdscr, music_dir, minimum_ui).run()
 
 
 if __name__ == "__main__":
+
     curses.wrapper(main)
