@@ -1,4 +1,4 @@
-# MPiT V1.1 (music Player in Terminal)
+# MPiT V1.1.2 (music Player in Terminal)
 
 MPiT is a minimalistic Music player that lives in your terminal.
 
@@ -8,17 +8,9 @@ MPiT supports MP3,OGG and WAV files.
 
 ---
 
-**HOW TO INSTALL :** Download MPiT.py
-
-**HOW TO RUN :** python MPiT.py
-
-
 By default, MPiT loads files from: ` ~/Music `.
 You can specify a custom directory as a command-line argument.
 ` python MPiT.py -d PATH `
-
-how to activate minimal ui mode:
-` python MPiT.py -m `
 
 ---
 
@@ -38,11 +30,11 @@ how to activate minimal ui mode:
 * Autoplays next song in list
 * Volume control
 * Live updating progress bar
-* minimal ui mode (removes border, progress bar)
+* Can play MP3,OGG and WAV files
 
 
 ### Requirements/Dependencies
-* minimal terminal size : 8x9 characters (3x9 in minimal ui mode)
+* minimal terminal size : 8x9 characters
 * Python 3.8+
 * pygame
 * mutagen
