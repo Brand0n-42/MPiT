@@ -1,4 +1,4 @@
-# MPiT V1.1.2 (music Player in Terminal)
+# MPiT V1.2 (music Player in Terminal)
 
 MPiT is a minimalistic Music player that lives in your terminal.
 
@@ -36,7 +36,6 @@ You can specify a custom directory as a command-line argument.
 ### Requirements/Dependencies
 * minimal terminal size : 8x9 characters
 * Python 3.8+
-* pygame
-* mutagen
+* just_playback
 
 This project is licensed under the MIT License — see the LICENSE file for details.

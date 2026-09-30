@@ -16,3 +16,9 @@
 * updated/changed README
 * changed the FPS from 24 to 30
 * +smaller changes on the code
+
+## v1.2
+* removed curses
+* removed the FPS limit
+* replaced mutagen and pygame with just_playback
+* +smaller changes on the code

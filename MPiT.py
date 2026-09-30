@@ -1,18 +1,11 @@
 # MPiT - music Player in Terminal
 
-import os
-import sys
-import time
-import curses
-import pygame
-import mutagen
+import os, sys, termios, tty, time, select
+from just_playback import Playback
 import argparse
 
-FPS = 30
-
 parser = argparse.ArgumentParser()
-parser.add_argument('-d', '-dir', dest='directory', type=str, default='~/Music', help='defines directory. default directory is ~/Music')
-
+parser.add_argument('-d', '-dir', dest='directory', type=str, default='~/Music', help='defines directory. default is ~/Music')
 parser.set_defaults(dir='~/Music')
 
 args = parser.parse_args()
@@ -21,8 +14,7 @@ def clamp(x, minimum, maximum):
 	return max(minimum, min(x, maximum))
 
 class MusicPlayer:
-	def __init__(self, stdscr, music_dir):
-		self.stdscr         = stdscr
+	def __init__(self, music_dir):
 		self.music_dir      = music_dir
 		
 		self.songs          = self.load_songs()
@@ -41,19 +33,11 @@ class MusicPlayer:
 		self.current_length = 0
 		
 		#init audio
-		try:
-			pygame.mixer.init()
-		except pygame.error as e:
-			self.show_error(f"Audio initialization failed:\n{e}")
-			sys.exit(1)
+		self.playback = Playback()
 		
-		#init curses
-		curses.curs_set(0)
-		self.stdscr.nodelay(True)
-		self.stdscr.keypad(True)
-		
-		curses.assume_default_colors(curses.COLOR_WHITE, curses.COLOR_BLACK)
-		curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_WHITE)
+		#init treminal for tui
+		print("\x1b[?1049h", end="", flush=True) #switch to alt buffer
+		print("\x1b[H") #curser goes to home
 	
 	def load_songs(self):
 		if not os.path.isdir(self.music_dir):
@@ -73,29 +57,24 @@ class MusicPlayer:
 	
 	def show_error(self, message):
 		
-		self.stdscr.clear()
+		print("\033[H\033[2J", end="") #clears terminal
 		
 		for i, line in enumerate(message.splitlines()):
-			self.stdscr.addstr(i, 0, line)
-		
-		self.stdscr.refresh()
-		self.stdscr.nodelay(False)
-		self.stdscr.getch()
-		self.stdscr.nodelay(True)
+			print(line)
 	
 	def play_song(self, index):
 		
-		pygame.mixer.music.unload()
+		self.playback.stop()
 		
 		file_path = os.path.join(self.music_dir, self.songs[index])
 		
-		pygame.mixer.music.load(file_path)
-		pygame.mixer.music.play()
+		self.playback.load_file(file_path)
+		self.playback.play()
 		
 		self.playing_index = index
 		self.state = 1
 		
-		self.current_length = mutagen.File(file_path).info.length
+		self.current_length = self.playback.duration
 	
 	def update_progress(self):
 		
@@ -106,11 +85,9 @@ class MusicPlayer:
 			self.progress = 0
 			return
 		
-		pos_s = pygame.mixer.music.get_pos() / 1000.0
+		self.progress = (self.playback.curr_pos / self.current_length) * 100
 		
-		self.progress = (pos_s / self.current_length) * 100
-		
-		if self.progress >= 99:
+		if self.playback.curr_pos > self.current_length-1:
 			next_index = (self.playing_index + 1) % self.song_list_len
 			self.play_song(next_index)
 	
@@ -119,68 +96,90 @@ class MusicPlayer:
 			self.play_song(self.selected_index)
 			
 		elif self.state == 1:
-			pygame.mixer.music.pause()
+			self.playback.pause()
 			self.state = 2
 			
 		elif self.state == 2:
 			if self.playing_index == self.selected_index:
-				pygame.mixer.music.unpause()
+				self.playback.resume()
 				self.state = 1
 			else:
 				self.play_song(self.selected_index)
 	
+	def getch(self):
+		fd = sys.stdin.fileno()
+		attr = termios.tcgetattr(fd)
+		try:
+			tty.setraw(fd)
+			
+			if not select.select([fd], [], [], 0.01)[0]:
+				return None
+			
+			ch = os.read(fd, 1)
+			if ch == b'\x1b':
+				while select.select([fd], [], [], 0.01)[0]:
+					ch += os.read(fd, 1)
+			return ch.decode(errors='ignore')
+		finally:
+			termios.tcsetattr(fd, termios.TCSADRAIN, attr)
+	
 	def handle_input(self):
 		
-		key = self.stdscr.getch()
+		key = self.getch()
 		
 		self.volume_change = False
 		
-		if key == ord('q'):
+		if key is None:
+			return
+		
+		if (key == 'q'):
 			sys.exit(0)
 			
-		elif key == ord(' '):
+		elif (key == ' '):
 			self.toggle_play_pause()
 			
-		elif key == ord('n') and self.playing_index != -1:
+		elif (key == 'n') and (self.playing_index != -1):
 			self.selected_index = (self.playing_index + 1) % self.song_list_len
 			self.play_song(self.selected_index)
 			
-		elif key == curses.KEY_UP:
+		elif (key == '\x1bOA') or (key == '\x1b[A'): #up
 			self.selected_index = (self.selected_index - 1) % self.song_list_len
 			
-		elif key == curses.KEY_DOWN:
+		elif (key == "\x1bOB") or (key == '\x1b[B'): #down
 			self.selected_index = (self.selected_index + 1) % self.song_list_len
 			
-		elif key == curses.KEY_RIGHT:
-			pygame.mixer.music.set_volume(clamp(pygame.mixer.music.get_volume() + 0.01,0,1))
+		elif (key == "\x1bOC") or (key == '\x1b[C'): #right
+			self.playback.set_volume(clamp(self.playback.volume + 0.01,0,1))
 			self.volume_change = True
 			
-		elif key == curses.KEY_LEFT:
-			pygame.mixer.music.set_volume(clamp(pygame.mixer.music.get_volume() - 0.01,0,1))
+		elif (key == "\x1bOD") or (key == '\x1b[D'): #left
+			self.playback.set_volume(clamp(self.playback.volume - 0.01,0,1))
 			self.volume_change = True
+	
+	def print_at(self,x, y, text):
+		print(f"\033[{y};{x}H{text}", end="", flush=True)
 	
 	def draw_progress_bar(self, height, width):
 		bar_width = max(0, width - 6)
 		
-		draw_height = height - 2
+		draw_height = height - 1
 		
 		if self.volume_change:
-			filled = bar_width * pygame.mixer.music.get_volume()
-			
-			self.stdscr.addstr(draw_height - 1, 3, f"volume:{int(pygame.mixer.music.get_volume() * 100)}")
+			filled = bar_width * self.playback.volume
+			self.print_at(3,draw_height - 1, f"Volume:{int(self.playback.volume * 100)}")
 			
 		else:
 			filled = bar_width * self.progress / 100
 		
 		bar = "#" * int(filled)
 		
-		self.stdscr.addch(draw_height, 2, "[")
-		self.stdscr.addstr(draw_height, 3, f"{bar}")
-		self.stdscr.addch(draw_height, width-3, "]")
+		self.print_at(2,draw_height, "[")
+		self.print_at(3,draw_height, f"{bar}")
+		self.print_at(width-3,draw_height, "]")
 	
 	def draw_song_list(self, height, width):
 		
-		max_visible = height - 5
+		max_visible = height - 4
 		
 		if self.song_list_len <= max_visible:
 			offset = 0
@@ -214,42 +213,40 @@ class MusicPlayer:
 			row = 2 + i - offset
 			
 			if i == self.selected_index:
-				self.stdscr.addstr(row, 2, line, curses.color_pair(1))
+				self.print_at(2,row,"\033[30;47m" + line + "\033[0m")
 			else:
-				self.stdscr.addstr(row, 2, line)
+				self.print_at(2,row, line)
 	
 	def draw(self):
-		self.stdscr.clear()
+		print("\033[H\033[2J", end="") #clears screen
 		
-		height, width = self.stdscr.getmaxyx()
+		width,height = os.get_terminal_size()
 		
 		while height < 8:
 			self.show_error("terminal to small \nminimum size is 8 lines")
-			height = self.stdscr.getmaxyx()[0]
+			height = os.get_terminal_size()[1]
 		while width < 9:
 			self.show_error("terminal to small \nminimum size is 9 columns")
-			width = self.stdscr.getmaxyx()[1]
+			width = os.get_terminal_size()[0]
 		
 		#--draws a border around the edge of the terminal--
-		self.stdscr.border('|', '|', '-', '-', '+', '+', '+', '+')
+		print("+" + "-"*(width-2) + "+")
+		print(("|" + " "*(width-2) + "|") * (height-2))
+		print("+" + "-"*(width-2) + "+", end="", flush=True)
 		
 		self.draw_progress_bar(height, width)
 		self.draw_song_list(height, width)
-		
-		self.stdscr.refresh()
 	
 	def run(self):
 		while True:
 			self.update_progress()
 			self.handle_input()
 			self.draw()
-			
-			time.sleep(1 / FPS)
-
-def main(stdscr):
-	music_dir = os.path.expanduser(args.directory)
-	MusicPlayer(stdscr, music_dir).run()
 
 if __name__ == "__main__":
-	curses.wrapper(main)
-
+	try:
+		music_dir = os.path.expanduser(args.directory)
+		MusicPlayer(music_dir).run()
+	finally: #resets terminal if tui is closed
+		print("\x1b[?1049l", end="", flush=True)
+		print("\033[?25h", end="", flush=True)
